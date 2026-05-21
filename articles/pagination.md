@@ -50,7 +50,7 @@ The pagination object provides:
 To retrieve the second page of search results with 5 results per page:
 
 ```bash
-curl -X GET "http://localhost:8000/search/technical-docs?query=neural%20networks&page=2&page_size=5"
+curl -X GET "http://localhost:3000/search/technical-docs?query=neural%20networks&page=2&page_size=5"
 ```
 
 ### Combine with Other Parameters
@@ -59,10 +59,10 @@ Pagination works seamlessly with other search parameters:
 
 ```bash
 # Paginated search with metadata filtering
-curl -X GET "http://localhost:8000/search/technical-docs?query=machine%20learning&page=2&page_size=10&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
+curl -X GET "http://localhost:3000/search/technical-docs?query=machine%20learning&page=2&page_size=10&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
 
 # Paginated advanced search with deduplication
-curl -X GET "http://localhost:8000/advanced-search/technical-docs?query=transformer%20models&page=3&page_size=10&min_score=0.5&deduplicate=true"
+curl -X GET "http://localhost:3000/advanced-search/technical-docs?query=transformer%20models&page=3&page_size=10&min_score=0.5&deduplicate=true"
 ```
 
 ### Cross-Collection Search
@@ -70,7 +70,7 @@ curl -X GET "http://localhost:8000/advanced-search/technical-docs?query=transfor
 When searching across all collections, each collection's results are paginated independently:
 
 ```bash
-curl -X GET "http://localhost:8000/search?query=deep%20learning&page=2&page_size=5"
+curl -X GET "http://localhost:3000/search?query=deep%20learning&page=2&page_size=5"
 ```
 
 Response format for cross-collection searches:
@@ -106,7 +106,7 @@ Here's a JavaScript example of implementing pagination in a client application:
 ```javascript
 async function searchWithPagination(query, page = 1, pageSize = 10) {
   const response = await fetch(
-    `http://localhost:8000/search/technical-docs?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`
+    `http://localhost:3000/search/technical-docs?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`
   );
   
   const data = await response.json();

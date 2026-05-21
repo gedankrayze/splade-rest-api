@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
@@ -6,19 +6,24 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SPLADE_MODEL_DIR=/app/models/Splade_PP_en_v2 \
-    SPLADE_AUTO_DOWNLOAD_MODEL=true
+    SPLADE_MODEL_DIR=/app/models/{model_name} \
+    SPLADE_DATA_DIR=/app/app/data \
+    SPLADE_AUTO_DOWNLOAD_MODEL=true \
+    PATH="/app/.venv/bin:$PATH"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Install uv
+RUN pip install --no-cache-dir uv
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency metadata first for better caching
+COPY pyproject.toml uv.lock README.md ./
+
+# Install Python dependencies into .venv
+RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .

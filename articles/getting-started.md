@@ -6,8 +6,8 @@ will guide you through setting up and using the SPLADE Content Server for your s
 ## What is SPLADE?
 
 SPLADE (SParse Lexical AnD Expansion) is a neural information retrieval model that combines the efficiency of sparse
-retrieval with the effectiveness of neural retrieval approaches. Unlike dense vector models (like embeddings), SPLADE
-creates sparse vector representations that:
+retrieval with semantic term expansion. This server uses SPLADE as the first retrieval stage, then reranks candidates
+with local FastEmbed dense embeddings. SPLADE creates sparse vector representations that:
 
 - Are highly interpretable
 - Work efficiently with inverted indexes
@@ -23,6 +23,7 @@ creates sparse vector representations that:
 - **Deduplication and chunking**: Process large documents intelligently
 - **Geo-spatial search**: Find documents based on geographic location
 - **Domain-specific models**: Use different models for different collections
+- **Hybrid reranking**: Rerank SPLADE candidates with local FastEmbed dense vectors
 - **RESTful API**: Easy integration with any application or service
 - **Pagination**: Navigate through large result sets efficiently
 
@@ -30,7 +31,8 @@ creates sparse vector representations that:
 
 ### Prerequisites
 
-- Python 3.7 or higher
+- Python 3.10 to 3.12
+- `uv`
 - 4GB+ of RAM (8GB+ recommended for larger collections)
 - GPU support is optional but recommended for faster encoding
 
@@ -43,27 +45,20 @@ git clone https://github.com/gedankrayze/splade_rest_api.git
 cd splade_rest_api
 ```
 
-2. Create and activate a virtual environment:
+2. Install dependencies:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
+uv sync
 ```
 
-3. Install dependencies:
+3. Run the server:
 
 ```bash
-pip install -r requirements.txt
+task start
 ```
 
-4. Run the server:
-
-```bash
-python main.py
-```
-
-The server will start on `http://localhost:8000` by default. The first time you run it, it will automatically download
-the SPLADE model (unless configured otherwise).
+The server will start on `http://localhost:3000`. The first time you index or search, it automatically downloads the
+default SPLADE model and FastEmbed dense model unless configured otherwise.
 
 ## Core Concepts
 
@@ -90,6 +85,7 @@ SPLADE Content Server provides several search capabilities:
 
 - **Basic search**: Find relevant documents using semantic understanding
 - **Advanced search**: Add deduplication, chunking, and threshold controls
+- **Hybrid reranking**: Use SPLADE for candidate generation and FastEmbed dense embeddings for reranking
 - **Cross-collection search**: Search across multiple collections at once
 - **Geo-spatial search**: Find documents near specific coordinates
 - **Metadata filtering**: Narrow results based on document attributes
@@ -99,7 +95,7 @@ SPLADE Content Server provides several search capabilities:
 ### Creating a Collection
 
 ```bash
-curl -X POST "http://localhost:8000/collections" \
+curl -X POST "http://localhost:3000/collections" \
      -H "Content-Type: application/json" \
      -d '{"id": "articles", "name": "News Articles", "description": "Collection of news articles from various sources"}'
 ```
@@ -107,7 +103,7 @@ curl -X POST "http://localhost:8000/collections" \
 ### Adding Documents
 
 ```bash
-curl -X POST "http://localhost:8000/documents/articles" \
+curl -X POST "http://localhost:3000/documents/articles" \
      -H "Content-Type: application/json" \
      -d '{
        "id": "article-1",
@@ -123,7 +119,7 @@ curl -X POST "http://localhost:8000/documents/articles" \
 ### Batch Adding Documents
 
 ```bash
-curl -X POST "http://localhost:8000/documents/articles/batch" \
+curl -X POST "http://localhost:3000/documents/articles/batch" \
      -H "Content-Type: application/json" \
      -d '{
        "documents": [
@@ -144,19 +140,19 @@ curl -X POST "http://localhost:8000/documents/articles/batch" \
 ### Basic Search
 
 ```bash
-curl -X GET "http://localhost:8000/search/articles?query=renewable%20energy&top_k=5"
+curl -X GET "http://localhost:3000/search/articles?query=renewable%20energy&top_k=5"
 ```
 
 ### Search with Metadata Filtering
 
 ```bash
-curl -X GET "http://localhost:8000/search/articles?query=economic&metadata_filter=%7B%22category%22%3A%22Business%22%7D"
+curl -X GET "http://localhost:3000/search/articles?query=economic&metadata_filter=%7B%22category%22%3A%22Business%22%7D"
 ```
 
 ### Search with Pagination
 
 ```bash
-curl -X GET "http://localhost:8000/search/articles?query=diplomacy&page=1&page_size=10"
+curl -X GET "http://localhost:3000/search/articles?query=diplomacy&page=1&page_size=10"
 ```
 
 ## Advanced Configuration
@@ -165,7 +161,8 @@ SPLADE Content Server can be configured through environment variables or a `.env
 
 ```
 # Core Settings
-SPLADE_MODEL_NAME=Splade_PP_en_v2
+SPLADE_MODEL_NAME=splade-cocondenser-selfdistil
+SPLADE_MODEL_HF_ID=baseplate/splade-cocondenser-selfdistil
 SPLADE_DATA_DIR=app/data
 SPLADE_DEFAULT_TOP_K=10
 
@@ -173,6 +170,9 @@ SPLADE_DEFAULT_TOP_K=10
 SPLADE_FAISS_INDEX_TYPE=flat  # Options: flat, ivf, hnsw
 SPLADE_SOFT_DELETE_ENABLED=true
 SPLADE_INDEX_REBUILD_THRESHOLD=100
+SPLADE_DENSE_RERANK_ENABLED=true
+SPLADE_DENSE_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+SPLADE_HYBRID_MAX_CANDIDATES=200
 
 # Chunking Settings
 SPLADE_MAX_CHUNK_SIZE=500
@@ -206,7 +206,7 @@ For specialized domains (legal, medical, technical, etc.), you can use domain-sp
 3. Create a collection with the specific model:
 
 ```bash
-curl -X POST "http://localhost:8000/collections" \
+curl -X POST "http://localhost:3000/collections" \
      -H "Content-Type: application/json" \
      -d '{
        "id": "legal-docs", 
@@ -214,6 +214,22 @@ curl -X POST "http://localhost:8000/collections" \
        "description": "Legal contracts and documents", 
        "model_name": "legal-splade"
      }'
+```
+
+## Benchmarking Dense Rerankers
+
+The server intentionally skips BM25 and uses SPLADE plus FastEmbed dense reranking. To compare dense models against the
+sample `docs/` corpus:
+
+```bash
+task benchmark-dense
+```
+
+The default benchmark compares multilingual MiniLM against multilingual MPNet. MiniLM remains the default because it is
+fast and multilingual. To include heavier models such as multilingual E5 large:
+
+```bash
+uv run python scripts/benchmark_dense_models.py --include-large
 ```
 
 ## Integration Examples
@@ -225,7 +241,7 @@ import requests
 import json
 
 # Base URL of the SPLADE Content Server
-base_url = "http://localhost:8000"
+base_url = "http://localhost:3000"
 
 
 # Create a collection
@@ -243,7 +259,7 @@ def add_document(collection_id, doc_id, content, metadata=None):
         f"{base_url}/documents/{collection_id}",
         json={"id": doc_id, "content": content, "metadata": metadata or {}}
     )
-    return response.status_code == 200
+    return response.status_code == 201
 
 
 # Search for documents
@@ -293,7 +309,7 @@ if __name__ == "__main__":
 ```javascript
 // SPLADE Content Server API Client
 class SpladeClient {
-  constructor(baseUrl = 'http://localhost:8000') {
+  constructor(baseUrl = 'http://localhost:3000') {
     this.baseUrl = baseUrl;
   }
 
@@ -387,9 +403,10 @@ Now that you've got the basics of SPLADE Content Server, here are some next step
 1. **Experiment with different collections**: Create collections for different content types or domains
 2. **Try advanced search options**: Explore chunking, deduplication, and score thresholding
 3. **Implement geo-spatial search**: Add location data to your documents for proximity-based queries
-4. **Customize for your domain**: Use or train domain-specific models for better results
-5. **Optimize performance**: Experiment with different FAISS index types for your collection size
+4. **Benchmark dense rerankers**: Compare FastEmbed models against your own query set
+5. **Customize for your domain**: Use or train domain-specific SPLADE models for better results
+6. **Optimize performance**: Experiment with different FAISS index types and hybrid candidate counts
 
-For more detailed information, check the documentation in the `docs/` directory of the repository.
+For more examples to index and search, use the tracked sample documents in the `docs/` directory of the repository.
 
 Happy searching with SPLADE Content Server!

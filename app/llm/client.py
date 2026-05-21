@@ -130,7 +130,7 @@ class AsyncLLMClient:
                         "tool_call_id": tool_call_id,
                         "output": error_message
                     })
-                except:
+                except Exception:
                     # Last resort if we can't even get the ID
                     tools_responses.append({
                         "tool_call_id": "error_processing_id",

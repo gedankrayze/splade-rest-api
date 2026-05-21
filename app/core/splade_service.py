@@ -62,6 +62,7 @@ class SpladeCollection:
 
         # Storage for documents and mappings
         self.documents = {}  # id -> Document
+        self.dense_vectors = {}  # id -> dense embedding vector
         self.id_to_index = {}  # id -> index in FAISS
         self.index_to_id = {}  # index in FAISS -> id
         self.next_index = 0  # Next index to use in FAISS
@@ -84,7 +85,7 @@ class SpladeCollection:
         # Load existing data if available
         self._load_data()
 
-    def add_document(self, doc: Document, vector: np.ndarray) -> bool:
+    def add_document(self, doc: Document, vector: np.ndarray, dense_vector: Optional[np.ndarray] = None) -> bool:
         """Add a document to the collection with its pre-encoded vector"""
         with self.lock:
             if doc.id in self.documents:
@@ -109,6 +110,8 @@ class SpladeCollection:
 
             # Store document and mapping
             self.documents[doc.id] = doc
+            if dense_vector is not None:
+                self.dense_vectors[doc.id] = dense_vector.astype(np.float32)
             self.id_to_index[doc.id] = self.next_index
             self.index_to_id[self.next_index] = doc.id
             self.next_index += 1
@@ -119,19 +122,30 @@ class SpladeCollection:
             logger.info(f"Added document {doc.id} to collection {self.id}")
             return True
 
-    def batch_add_documents(self, docs: List[Document], vectors: List[np.ndarray]) -> int:
+    def batch_add_documents(
+            self,
+            docs: List[Document],
+            vectors: List[np.ndarray],
+            dense_vectors: Optional[List[np.ndarray]] = None
+    ) -> int:
         """Add multiple documents to the collection in batch"""
         with self.lock:
             if len(docs) != len(vectors):
                 raise ValueError("Number of documents and vectors must match")
 
+            if dense_vectors is not None and len(docs) != len(dense_vectors):
+                raise ValueError("Number of documents and dense vectors must match")
+
             # Filter out documents that already exist
             new_docs = []
             new_vectors = []
-            for doc, vec in zip(docs, vectors):
+            new_dense_vectors = []
+            for i, (doc, vec) in enumerate(zip(docs, vectors)):
                 if doc.id not in self.documents:
                     new_docs.append(doc)
                     new_vectors.append(vec)
+                    if dense_vectors is not None:
+                        new_dense_vectors.append(dense_vectors[i])
 
             if not new_docs:
                 logger.warning(f"No new documents to add to collection {self.id}")
@@ -147,9 +161,18 @@ class SpladeCollection:
             # Store documents and mappings
             for i, doc in enumerate(new_docs):
                 self.documents[doc.id] = doc
+                if dense_vectors is not None:
+                    self.dense_vectors[doc.id] = new_dense_vectors[i].astype(np.float32)
                 self.id_to_index[doc.id] = self.next_index
                 self.index_to_id[self.next_index] = doc.id
                 self.next_index += 1
+
+                if doc.location:
+                    self.geo_index.add_document(
+                        doc.id,
+                        doc.location.latitude,
+                        doc.location.longitude
+                    )
 
             # Persist changes
             self._save_data()
@@ -193,6 +216,7 @@ class SpladeCollection:
 
             # Remove from storage
             del self.documents[doc_id]
+            self.dense_vectors.pop(doc_id, None)
             del self.id_to_index[doc_id]
             del self.index_to_id[removed_index]
 
@@ -345,6 +369,7 @@ class SpladeCollection:
                     "name": self.name,
                     "description": self.description,
                     "documents": self.documents,
+                    "dense_vectors": self.dense_vectors,
                     "id_to_index": self.id_to_index,
                     "index_to_id": self.index_to_id,
                     "next_index": self.next_index,
@@ -378,6 +403,7 @@ class SpladeCollection:
                 self.name = data["name"]
                 self.description = data["description"]
                 self.documents = data["documents"]
+                self.dense_vectors = data.get("dense_vectors", {})
                 self.id_to_index = data["id_to_index"]
                 self.index_to_id = data["index_to_id"]
                 self.next_index = data["next_index"]
@@ -471,6 +497,7 @@ class SpladeService:
         # Model cache to avoid loading the same model multiple times
         self.models = {}
         self.tokenizers = {}
+        self.dense_embedding_model = None
 
         # Load the default model
         self._load_model(model_name)
@@ -509,7 +536,7 @@ class SpladeService:
             # Initialize tokenizer and model
             logger.info(f"Loading model from {model_dir}")
             tokenizer = AutoTokenizer.from_pretrained(model_dir)
-            model = AutoModelForMaskedLM.from_pretrained(model_dir)
+            model = AutoModelForMaskedLM.from_pretrained(model_dir, use_safetensors=True)
 
             # Set device
             if torch.backends.mps.is_available():
@@ -608,6 +635,103 @@ class SpladeService:
             results.append(vector)
         return results
 
+    def _load_dense_embedding_model(self):
+        """Load the configured fastembed model lazily."""
+        if self.dense_embedding_model is None:
+            from fastembed import TextEmbedding
+
+            logger.info(f"Loading dense embedding model: {settings.DENSE_EMBEDDING_MODEL}")
+            self.dense_embedding_model = TextEmbedding(model_name=settings.DENSE_EMBEDDING_MODEL)
+
+        return self.dense_embedding_model
+
+    def encode_dense_texts(self, texts: List[str]) -> List[np.ndarray]:
+        """Encode texts with fastembed for dense reranking."""
+        if not texts or not settings.DENSE_RERANK_ENABLED:
+            return []
+
+        try:
+            model = self._load_dense_embedding_model()
+            vectors = [np.asarray(vector, dtype=np.float32) for vector in model.embed(texts)]
+            return [self._normalize_dense_vector(vector) for vector in vectors]
+        except Exception as e:
+            logger.error(f"Dense embedding failed, continuing with sparse results only: {e}")
+            return []
+
+    @staticmethod
+    def _normalize_dense_vector(vector: np.ndarray) -> np.ndarray:
+        """Normalize dense vectors so dot product is cosine similarity."""
+        norm = np.linalg.norm(vector)
+        if norm == 0:
+            return vector.astype(np.float32)
+        return (vector / norm).astype(np.float32)
+
+    @staticmethod
+    def _hybrid_candidate_count(top_k: int) -> int:
+        """Number of sparse candidates to fetch before dense reranking."""
+        return min(
+            settings.HYBRID_MAX_CANDIDATES,
+            max(top_k, top_k * settings.HYBRID_CANDIDATE_MULTIPLIER),
+        )
+
+    def _ensure_dense_vectors(self, collection: SpladeCollection, results: List[Dict[str, Any]]) -> None:
+        """Backfill dense vectors for candidate documents missing persisted embeddings."""
+        missing_docs = [
+            collection.documents[result["id"]]
+            for result in results
+            if result["id"] in collection.documents and result["id"] not in collection.dense_vectors
+        ]
+
+        if not missing_docs:
+            return
+
+        dense_vectors = self.encode_dense_texts([doc.content for doc in missing_docs])
+        if len(dense_vectors) != len(missing_docs):
+            return
+
+        for doc, vector in zip(missing_docs, dense_vectors):
+            collection.dense_vectors[doc.id] = vector
+
+        collection._save_data()
+
+    def _dense_rerank(
+            self,
+            collection: SpladeCollection,
+            query: str,
+            results: List[Dict[str, Any]],
+            top_k: int
+    ) -> List[Dict[str, Any]]:
+        """Rerank sparse candidates with dense cosine similarity."""
+        if not settings.DENSE_RERANK_ENABLED or not results:
+            return results[:top_k]
+
+        self._ensure_dense_vectors(collection, results)
+
+        query_vectors = self.encode_dense_texts([query])
+        if not query_vectors:
+            return results[:top_k]
+
+        query_vector = query_vectors[0]
+        reranked = []
+
+        for result in results:
+            dense_vector = collection.dense_vectors.get(result["id"])
+            if dense_vector is None:
+                continue
+
+            dense_score = float(np.dot(query_vector, dense_vector))
+            reranked_result = result.copy()
+            reranked_result["sparse_score"] = result["score"]
+            reranked_result["dense_score"] = dense_score
+            reranked_result["score"] = dense_score
+            reranked.append(reranked_result)
+
+        if not reranked:
+            return results[:top_k]
+
+        reranked.sort(key=lambda item: item["score"], reverse=True)
+        return reranked[:top_k]
+
     def create_collection(self, collection_id: str, name: str, description: Optional[str] = None,
                           model_name: Optional[str] = None) -> bool:
         """
@@ -703,9 +827,11 @@ class SpladeService:
                 for chunk in chunks:
                     # Encode document with the appropriate model
                     vector = self.encode_text(chunk.content, model_name)
+                    dense_vectors = self.encode_dense_texts([chunk.content])
+                    dense_vector = dense_vectors[0] if dense_vectors else None
 
                     # Add to collection (don't auto-chunk to avoid infinite recursion)
-                    chunk_success = self.collections[collection_id].add_document(chunk, vector)
+                    chunk_success = self.collections[collection_id].add_document(chunk, vector, dense_vector)
                     success = success and chunk_success
 
                 return success
@@ -713,9 +839,11 @@ class SpladeService:
         # If not auto-chunking or document is small enough
         # Encode document with the appropriate model
         vector = self.encode_text(doc.content, model_name)
+        dense_vectors = self.encode_dense_texts([doc.content])
+        dense_vector = dense_vectors[0] if dense_vectors else None
 
         # Add to collection
-        return self.collections[collection_id].add_document(doc, vector)
+        return self.collections[collection_id].add_document(doc, vector, dense_vector)
 
     def batch_add_documents(self, collection_id: str, docs: List[Document], auto_chunk: bool = True) -> int:
         """Add multiple documents to a collection in batch"""
@@ -743,17 +871,27 @@ class SpladeService:
 
                 # Encode all chunks with the appropriate model
                 vectors = self.batch_encode_texts([chunk.content for chunk in all_chunks], model_name)
+                dense_vectors = self.encode_dense_texts([chunk.content for chunk in all_chunks])
 
                 # Add chunks to collection
-                added_count = self.collections[collection_id].batch_add_documents(all_chunks, vectors)
+                added_count = self.collections[collection_id].batch_add_documents(
+                    all_chunks,
+                    vectors,
+                    dense_vectors if len(dense_vectors) == len(all_chunks) else None
+                )
                 return added_count
 
         # If not auto-chunking or no documents were chunked
         # Encode documents with the appropriate model
         vectors = self.batch_encode_texts([doc.content for doc in docs], model_name)
+        dense_vectors = self.encode_dense_texts([doc.content for doc in docs])
 
         # Add to collection
-        return self.collections[collection_id].batch_add_documents(docs, vectors)
+        return self.collections[collection_id].batch_add_documents(
+            docs,
+            vectors,
+            dense_vectors if len(dense_vectors) == len(docs) else None
+        )
 
     def remove_document(self, collection_id: str, doc_id: str) -> bool:
         """Remove a document from a collection"""
@@ -803,6 +941,7 @@ class SpladeService:
 
             # Encode all documents with collection-specific model
             vectors = self.batch_encode_texts([doc.content for doc in docs], model_name)
+            dense_vectors = self.encode_dense_texts([doc.content for doc in docs])
 
             # Create new mappings
             id_to_index = {}
@@ -833,6 +972,10 @@ class SpladeService:
             # Update collection
             collection.id_to_index = id_to_index
             collection.index_to_id = index_to_id
+            collection.dense_vectors = {
+                doc.id: dense_vectors[i]
+                for i, doc in enumerate(docs)
+            } if len(dense_vectors) == len(docs) else {}
             collection.next_index = len(docs)
             # Update index type to match what we created
             collection.index_type = settings.FAISS_INDEX_TYPE
@@ -863,10 +1006,13 @@ class SpladeService:
         # Encode query using the appropriate model
         query_vector = self.encode_text(query, model_name)
 
+        sparse_top_k = self._hybrid_candidate_count(top_k) if settings.DENSE_RERANK_ENABLED else top_k
+
         # Search collection
         results = self.collections[collection_id].search(
-            query_vector, top_k, filter_metadata, geo_filter, min_score
+            query_vector, sparse_top_k, filter_metadata, geo_filter, min_score
         )
+        results = self._dense_rerank(collection, query, results, top_k)
 
         # End timing
         query_time = (time.time() - start_time) * 1000  # in milliseconds
@@ -890,10 +1036,13 @@ class SpladeService:
             # Encode query using the appropriate model
             query_vector = self.encode_text(query, model_name)
 
+            sparse_top_k = self._hybrid_candidate_count(top_k) if settings.DENSE_RERANK_ENABLED else top_k
+
             # Search this collection
             collection_results = collection.search(
-                query_vector, top_k, filter_metadata, geo_filter, min_score
+                query_vector, sparse_top_k, filter_metadata, geo_filter, min_score
             )
+            collection_results = self._dense_rerank(collection, query, collection_results, top_k)
             if collection_results:
                 all_results[collection_id] = collection_results
 
@@ -1006,11 +1155,28 @@ class SpladeService:
             logger.info("Starting with empty collections")
 
 
-# Initialize the SPLADE service as a singleton
-try:
-    splade_service = SpladeService()
-    logger.info(f"SPLADE service initialized with default model: {splade_service.default_model_name}")
-except Exception as e:
-    logger.error(f"Error initializing SPLADE service: {e}")
-    # Create a placeholder service that will be properly initialized when the model is available
-    splade_service = None
+class LazySpladeService:
+    """Initialize the SPLADE service on first use instead of at import time."""
+
+    def __init__(self):
+        self._service: Optional[SpladeService] = None
+        self._lock = threading.RLock()
+
+    @property
+    def is_initialized(self) -> bool:
+        return self._service is not None
+
+    def get_service(self) -> SpladeService:
+        with self._lock:
+            if self._service is None:
+                self._service = SpladeService()
+                logger.info(f"SPLADE service initialized with default model: {self._service.default_model_name}")
+            return self._service
+
+    def __getattr__(self, name: str):
+        return getattr(self.get_service(), name)
+
+
+# Initialize the SPLADE service lazily so imports, linting, and API startup do not
+# download or load native ML dependencies until a search/indexing operation needs them.
+splade_service = LazySpladeService()

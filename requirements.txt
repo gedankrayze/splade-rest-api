@@ -5,6 +5,7 @@ pydantic-settings
 transformers
 torch
 faiss-cpu
+fastembed
 numpy
 tqdm
 python-multipart

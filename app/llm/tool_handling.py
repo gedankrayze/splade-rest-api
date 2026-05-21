@@ -198,7 +198,7 @@ async def process_function_calls(tool_registry, function_calls, id_mapping=None)
                 original_id = getattr(tool_call, 'call_id',
                                       getattr(tool_call, 'id', 'unknown'))
                 tool_call_id = id_mapping.get(original_id, 'error_id')
-            except:
+            except Exception:
                 pass
 
             tool_responses.append({

@@ -7,47 +7,48 @@ dotenv: ['.env', '{{.ENV}}/.env', '{{.HOME}}/.env']
 tasks:
   venv:
     cmds:
-      - cmd: |
-          python3 -m venv .venv
+      - uv venv --python 3.12
 
   install:
     cmds:
       - cmd: brew install libomp openblas
         platforms: [darwin]
-      - cmd: |
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -U -r requirements.txt
-        platforms: ["linux", "darwin"]
-      - cmd: |
-          python3 -m venv .venv
-          .venv\Scripts\activate
-          python -m pip install --upgrade pip
-          pip install -U -r requirements.txt
-        platforms: ["windows"]
+      - uv sync
 
   start:
     cmds:
-      - |
-        source .venv/bin/activate
-        uvicorn app.api.server:app --host 0.0.0.0 --port 3000 --reload
+      - uv run uvicorn app.api.server:app --host 0.0.0.0 --port 3000 --reload
+
+  lint:
+    cmds:
+      - uv run ruff check app client tests/code tests/unit scripts main.py
+
+  test:
+    cmds:
+      - uv run pytest -q
+
+  test-integration:
+    cmds:
+      - PYTHONPATH=. uv run python tests/code/test_markdown_chunking.py
+      - PYTHONPATH=. uv run python tests/code/test_large_documents.py
+
+  benchmark-dense:
+    cmds:
+      - uv run python scripts/benchmark_dense_models.py
 
   add-document:
     requires:
       vars:
         - file
     cmds:
-      - |
-        source .venv/bin/activate
-        python client/memsplora_cli.py add-document --mode "advanced" --collection-id iirds "{{.file}}"
+      - uv run python client/memsplora_cli.py add-document --mode "advanced" --collection-id iirds "{{.file}}"
+
   search:
     requires:
       vars:
         - query
     cmds:
-      - |
-        source .venv/bin/activate
-        python client/memsplora_cli.py search --mode "advanced" --collection-id iirds "{{.query}}" --min-score 0.8 --top-k 5
+      - uv run python client/memsplora_cli.py search --mode "advanced" --collection-id iirds "{{.query}}" --min-score 0.8 --top-k 5
 
   docker-build:
     cmds:
@@ -56,4 +57,3 @@ tasks:
   docker-run:
     cmds:
       - docker run -d --name memsplora -p 3000:3000 memsplora:latest
-      - docker exec -it memsplora bash

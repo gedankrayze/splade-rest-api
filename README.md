@@ -20,6 +20,7 @@ This project provides a REST API for managing document collections and performin
 - **Geo-Spatial Search**: Find documents based on geographical proximity
 - **Domain-Specific Models**: Support for using different SPLADE models for different collections
 - **Pagination Support**: Navigate through large result sets with built-in pagination
+- **Hybrid Reranking**: Rerank SPLADE candidates with local dense embeddings from FastEmbed
 
 ## Installation
 
@@ -30,14 +31,15 @@ git clone https://github.com/gedankrayze/splade_rest_api.git
 cd splade_rest_api
 ```
 
-2. Install the requirements:
+2. Install dependencies with `uv`:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
-3. Download a pre-trained SPLADE model or use your own fine-tuned model. The server can automatically download the
-   `prithivida/Splade_PP_en_v2` model from Hugging Face on first run.
+3. Downloading models is automatic on first use. The server downloads the default SPLADE model
+   `baseplate/splade-cocondenser-selfdistil` and the default FastEmbed dense model when indexing/searching first needs
+   them.
 
 ## Configuration
 
@@ -45,10 +47,10 @@ You can configure the application using environment variables or a `.env` file:
 
 ### Core Settings
 
-- `SPLADE_MODEL_NAME`: Name of the model to use (default: `Splade_PP_en_v2`)
+- `SPLADE_MODEL_NAME`: Name of the model to use (default: `splade-cocondenser-selfdistil`)
 - `SPLADE_MODEL_DIR`: Directory template for models (default: `./models/{model_name}`)
 - `SPLADE_MODEL_HF_ID`: Hugging Face model ID to download if model directory is empty (default:
-  `prithivida/Splade_PP_en_v2`)
+  `baseplate/splade-cocondenser-selfdistil`)
 - `SPLADE_AUTO_DOWNLOAD_MODEL`: Whether to automatically download the model if not found (default: `true`)
 - `SPLADE_MAX_LENGTH`: Maximum sequence length for encoding (default: `512`)
 - `SPLADE_DATA_DIR`: Directory for storing data (default: `app/data`)
@@ -62,6 +64,11 @@ You can configure the application using environment variables or a `.env` file:
 - `SPLADE_FAISS_SEARCH_NPROBE`: Number of clusters to search for IVF (default: `10`)
 - `SPLADE_SOFT_DELETE_ENABLED`: Enable soft deletion for documents (default: `true`)
 - `SPLADE_INDEX_REBUILD_THRESHOLD`: Rebuild index after this many deletions (default: `100`)
+- `SPLADE_DENSE_RERANK_ENABLED`: Rerank SPLADE candidates with FastEmbed dense vectors (default: `true`)
+- `SPLADE_DENSE_EMBEDDING_MODEL`: FastEmbed model for dense reranking (default:
+  `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`)
+- `SPLADE_HYBRID_CANDIDATE_MULTIPLIER`: Sparse candidate multiplier before dense reranking (default: `20`)
+- `SPLADE_HYBRID_MAX_CANDIDATES`: Maximum sparse candidates before dense reranking (default: `200`)
 
 ### Chunking Settings
 
@@ -74,20 +81,20 @@ You can configure the application using environment variables or a `.env` file:
 To start the server:
 
 ```bash
-python main.py
+task start
 ```
 
-The API will be available at `http://localhost:8000`.
+The API will be available at `http://localhost:3000`.
 
 You can also use Uvicorn directly:
 
 ```bash
-uvicorn app.api.server:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn app.api.server:app --host 0.0.0.0 --port 3000 --reload
 ```
 
 ## API Documentation
 
-API documentation is automatically generated and available at `http://localhost:8000/docs`.
+API documentation is automatically generated and available at `http://localhost:3000/docs`.
 
 ### Main Endpoints
 
@@ -122,12 +129,12 @@ API documentation is automatically generated and available at `http://localhost:
 
 ```bash
 # Basic collection
-curl -X POST "http://localhost:8000/collections" \
+curl -X POST "http://localhost:3000/collections" \
      -H "Content-Type: application/json" \
      -d '{"id": "technical-docs", "name": "Technical Documentation", "description": "Technical documentation for our products"}'
 
 # Collection with domain-specific model
-curl -X POST "http://localhost:8000/collections" \
+curl -X POST "http://localhost:3000/collections" \
      -H "Content-Type: application/json" \
      -d '{"id": "legal-docs", "name": "Legal Documentation", "description": "Legal contracts and documents", "model_name": "legal-splade"}'
 ```
@@ -135,7 +142,7 @@ curl -X POST "http://localhost:8000/collections" \
 ### Add a Document
 
 ```bash
-curl -X POST "http://localhost:8000/documents/technical-docs" \
+curl -X POST "http://localhost:3000/documents/technical-docs" \
      -H "Content-Type: application/json" \
      -d '{"id": "doc-001", "content": "SPLADE is a sparse lexical model for information retrieval", "metadata": {"category": "AI", "author": "John Doe"}}'
 ```
@@ -143,19 +150,34 @@ curl -X POST "http://localhost:8000/documents/technical-docs" \
 ### Search for Documents
 
 ```bash
-curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5"
+curl -X GET "http://localhost:3000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5"
 ```
 
 ### Search with Metadata Filtering
 
 ```bash
-curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
+curl -X GET "http://localhost:3000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
 ```
 
 ### Search with Pagination
 
 ```bash
-curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&page=2&page_size=10"
+curl -X GET "http://localhost:3000/search/technical-docs?query=sparse%20lexical%20retrieval&page=2&page_size=10"
+```
+
+### Benchmark Dense Models
+
+The repository includes a small benchmark over the tracked `docs/` sample corpus:
+
+```bash
+task benchmark-dense
+```
+
+This compares the default multilingual MiniLM reranker against a larger multilingual MPNet model. To include heavier
+models such as multilingual E5 large, run:
+
+```bash
+uv run python scripts/benchmark_dense_models.py --include-large
 ```
 
 ## Performance Optimizations
@@ -179,6 +201,17 @@ For improved performance when removing documents:
 - The index is rebuilt after a configurable number of deletions
 - Greatly reduces the cost of document deletions
 
+### Hybrid Reranking
+
+Search is sparse-first and dense-reranked by default:
+
+1. SPLADE retrieves a larger candidate set.
+2. FastEmbed dense vectors rerank those candidates.
+3. Responses return `score` as the dense score and include `sparse_score` plus `dense_score` for inspection.
+
+Dense vectors are computed during document ingest and persisted with each collection. BM25 is intentionally not part of
+the pipeline.
+
 ### Large Document Handling
 
 Special handling for extremely large documents:
@@ -200,7 +233,7 @@ Support for domain-specific SPLADE models:
 For example, to create a collection with a domain-specific model:
 
 ```bash
-curl -X POST "http://localhost:8000/collections" \
+curl -X POST "http://localhost:3000/collections" \
      -H "Content-Type: application/json" \
      -d '{"id": "medical-docs", "name": "Medical Documentation", "description": "Medical records and reports", "model_name": "medical-splade-model"}'
 ```
@@ -210,7 +243,8 @@ library.
 
 ## Additional Documentation
 
-For more detailed information, see the documentation in the `docs/` directory and articles in the `articles/` directory:
+For more examples to index and search, use the tracked sample documents in the `docs/` directory. Additional articles
+live in the `articles/` directory:
 
 ### Documentation
 
@@ -224,6 +258,7 @@ For more detailed information, see the documentation in the `docs/` directory an
 
 - [Getting Started with SPLADE Content Server](articles/getting-started.md)
 - [Using Pagination with the SPLADE Content Server API](articles/pagination.md)
+- [LLM-Enhanced Search with SPLADE Content Server](articles/llm-enhanced-search.md)
 
 ## License
 

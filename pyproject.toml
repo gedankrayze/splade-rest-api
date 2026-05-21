@@ -1,0 +1,42 @@
+[project]
+name = "splade-rest-api"
+version = "0.1.0"
+description = "In-memory SPLADE content server with FAISS-backed semantic search."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "anthropic",
+    "faiss-cpu",
+    "fastapi",
+    "fastembed>=0.8.0",
+    "numpy",
+    "openai",
+    "pydantic",
+    "pydantic-settings",
+    "python-multipart",
+    "torch",
+    "tqdm",
+    "transformers",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".venv",
+    "__pycache__",
+    "app/data",
+    "models",
+    "temp",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["."]

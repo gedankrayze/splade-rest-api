@@ -13,6 +13,12 @@ This directory contains articles and guides to help you get the most out of the 
 
 - [Using Pagination with the SPLADE Content Server API](pagination.md) - Learn how to efficiently navigate through large
   result sets using the pagination features.
+- [LLM-Enhanced Search with SPLADE Content Server](llm-enhanced-search.md) - Use query expansion and question answering
+  on top of the retrieval pipeline.
+
+### Evaluation
+
+The dense reranker benchmark is documented in the getting-started guide and can be run with `task benchmark-dense`.
 
 ## Request More Articles
 

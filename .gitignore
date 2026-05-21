@@ -1,4 +1,37 @@
-.idea/
+# Environment
+.env
+.env.*
+!.env.example
 .venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Project runtime data
+app/data/
+models/
 temp/
-.env*
+tmp/
+benchmarks/
+
+# Keep docs/ tracked: it contains sample documents used to exercise the app.
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -90,10 +90,10 @@ def create_test_collection(client, collection_id, name, description, model_name=
 
     # Check if collection exists, delete if it does
     try:
-        existing = client.get_collection(collection_id)
+        client.get_collection(collection_id)
         print(f"Deleting existing collection {collection_id}")
         client.delete_collection(collection_id)
-    except:
+    except Exception:
         pass  # Collection doesn't exist
 
     # Create new collection

@@ -4,7 +4,7 @@ Pydantic models for API request/response schemas
 
 from typing import List, Dict, Any, Optional, Tuple
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class GeoCoordinates(BaseModel):
@@ -26,18 +26,20 @@ class Document(BaseModel):
     source_id: Optional[str] = Field(default=None, description="Source document ID for chunked documents")
     chunk_index: Optional[int] = Field(default=None, description="Chunk index for chunked documents")
 
-    @validator('metadata', pre=True)
-    def handle_legacy_location(cls, v, values):
-        """Handle legacy location data in metadata for backward compatibility"""
-        if v and 'latitude' in v and 'longitude' in v:
-            # If we have location data in metadata but no location field,
-            # create the location object
-            if 'location' not in values or values['location'] is None:
-                values['location'] = GeoCoordinates(
-                    latitude=v['latitude'],
-                    longitude=v['longitude']
-                )
-        return v
+    @model_validator(mode="before")
+    @classmethod
+    def populate_location_from_metadata(cls, data):
+        """Populate location when latitude/longitude are supplied in metadata."""
+        if not isinstance(data, dict):
+            return data
+
+        metadata = data.get("metadata")
+        if data.get("location") is None and metadata and "latitude" in metadata and "longitude" in metadata:
+            data["location"] = {
+                "latitude": metadata["latitude"],
+                "longitude": metadata["longitude"],
+            }
+        return data
 
 
 class DocumentBatch(BaseModel):
@@ -51,6 +53,8 @@ class SearchResult(BaseModel):
     content: str = Field(..., description="Document content")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Document metadata")
     score: float = Field(..., description="Relevance score")
+    sparse_score: Optional[float] = Field(default=None, description="Original SPLADE score before dense reranking")
+    dense_score: Optional[float] = Field(default=None, description="Dense reranking score")
 
 
 class GeoSearchParams(BaseModel):
@@ -66,6 +70,7 @@ class PaginationInfo(BaseModel):
     page_size: int = Field(..., description="Number of results per page")
     total_results: int = Field(..., description="Total number of results")
     total_pages: int = Field(..., description="Total number of pages")
+
 
 class SearchResponse(BaseModel):
     """Search response model"""

@@ -100,7 +100,6 @@ async def handle_anthropic_api(
         for block in tool_use_blocks:
             try:
                 tool_name = block.name
-                tool_id = block.id
                 tool_input = block.input or {}
 
                 # Log the tool input for debugging

@@ -105,6 +105,17 @@ class DocumentChunker:
             para_tokens = self._estimate_tokens(para)
             chunk_tokens = self._estimate_tokens(current_chunk)
 
+            if para_tokens > self.max_chunk_size:
+                if current_chunk.strip():
+                    chunks.append(self._create_chunk_document(document, current_chunk, chunk_index, base_metadata))
+                    chunk_index += 1
+                    current_chunk = ""
+
+                for part in self._split_large_text(para):
+                    chunks.append(self._create_chunk_document(document, part, chunk_index, base_metadata))
+                    chunk_index += 1
+                continue
+
             # If adding paragraph exceeds chunk size and we already have content,
             # finish current chunk and start a new one
             if chunk_tokens + para_tokens > self.max_chunk_size and chunk_tokens > 0:
@@ -135,6 +146,26 @@ class DocumentChunker:
                 document, current_chunk, chunk_index, base_metadata
             )
             chunks.append(chunk_doc)
+
+        return chunks
+
+    def _split_large_text(self, text: str) -> List[str]:
+        """Split text that has no paragraph boundaries into bounded word chunks."""
+        words = text.split()
+        if not words:
+            return []
+
+        max_words = max(1, int(self.max_chunk_size / 1.3))
+        overlap_words = min(max(0, self.overlap_size // 2), max_words - 1)
+        chunks = []
+        start = 0
+
+        while start < len(words):
+            end = min(start + max_words, len(words))
+            chunks.append(" ".join(words[start:end]))
+            if end == len(words):
+                break
+            start = end - overlap_words
 
         return chunks
 
@@ -170,7 +201,6 @@ class DocumentChunker:
 
         # Basic estimation: count words and add character-based adjustment
         words = len(text.split())
-        chars = len(text)
 
         # A rough estimation: each word is about 1.3 tokens on average
         estimated_tokens = words * 1.3

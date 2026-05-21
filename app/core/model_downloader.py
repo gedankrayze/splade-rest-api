@@ -47,19 +47,19 @@ def download_model_if_needed(model_dir: str, model_id: str) -> bool:
 
         # Download tokenizer
         if not has_tokenizer:
-            logger.info(f"Downloading tokenizer...")
+            logger.info("Downloading tokenizer...")
             tokenizer = AutoTokenizer.from_pretrained(model_id)
             tokenizer.save_pretrained(model_dir)
             logger.info(f"Tokenizer saved to {model_dir}")
 
         # Download model
         if not has_model or not has_config:
-            logger.info(f"Downloading model weights...")
-            model = AutoModelForMaskedLM.from_pretrained(model_id)
+            logger.info("Downloading model weights...")
+            model = AutoModelForMaskedLM.from_pretrained(model_id, use_safetensors=True)
             model.save_pretrained(model_dir)
             logger.info(f"Model saved to {model_dir}")
 
-        logger.info(f"Model download complete")
+        logger.info("Model download complete")
         return True
 
     except Exception as e:

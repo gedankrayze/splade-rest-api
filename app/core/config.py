@@ -4,6 +4,7 @@ Application configuration
 
 from enum import Enum
 
+from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -17,6 +18,13 @@ class FAISSIndexType(str, Enum):
 class Settings(BaseSettings):
     """Application settings"""
 
+    model_config = ConfigDict(
+        env_file=".env",
+        env_prefix="SPLADE_",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # API settings
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "SPLADE Content Server"
@@ -27,9 +35,9 @@ class Settings(BaseSettings):
     LLM_ENABLED: bool = True
 
     # SPLADE model settings
-    MODEL_NAME: str = "Splade_PP_en_v2"  # Name for the model directory
+    MODEL_NAME: str = "splade-cocondenser-selfdistil"  # Name for the model directory
     MODEL_DIR: str = "./models/{model_name}"  # Template with {model_name} placeholder
-    MODEL_HF_ID: str = "prithivida/Splade_PP_en_v2"  # Hugging Face model ID to download if MODEL_DIR is empty
+    MODEL_HF_ID: str = "baseplate/splade-cocondenser-selfdistil"  # Hugging Face model ID to download if MODEL_DIR is empty
     AUTO_DOWNLOAD_MODEL: bool = True  # Whether to automatically download the model if not found
     MAX_LENGTH: int = 512
 
@@ -39,6 +47,12 @@ class Settings(BaseSettings):
     # Search settings
     DEFAULT_TOP_K: int = 10
     MIN_SCORE_THRESHOLD: float = 0.3  # Minimum similarity score for results
+
+    # Hybrid dense reranking settings
+    DENSE_RERANK_ENABLED: bool = True
+    DENSE_EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    HYBRID_CANDIDATE_MULTIPLIER: int = 20
+    HYBRID_MAX_CANDIDATES: int = 200
 
     # Chunking settings
     MAX_CHUNK_SIZE: int = 500  # Maximum tokens per regular chunk
@@ -58,12 +72,6 @@ class Settings(BaseSettings):
     # Document update settings
     SOFT_DELETE_ENABLED: bool = True  # Enable soft deletion of documents
     INDEX_REBUILD_THRESHOLD: int = 100  # Rebuild index after this many deletions
-    
-    class Config:
-        env_file = ".env"
-        env_prefix = "SPLADE_"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 settings = Settings()

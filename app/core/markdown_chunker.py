@@ -347,7 +347,7 @@ class MarkdownAwareChunker:
 
                 # If even comma parts are too big, just add the whole sentence
                 if any(self._estimate_tokens(part) > self.max_chunk_size for part in comma_parts):
-                    sub_blocks.append(sentence)
+                    sub_blocks.extend(self._split_large_text(sentence))
                 else:
                     current_part = ""
                     for part in comma_parts:
@@ -375,6 +375,26 @@ class MarkdownAwareChunker:
             sub_blocks.append(current_sub_block)
 
         return sub_blocks
+
+    def _split_large_text(self, text: str) -> List[str]:
+        """Split text with no useful semantic boundaries into bounded word chunks."""
+        words = text.split()
+        if not words:
+            return []
+
+        max_words = max(1, int(self.max_chunk_size / 1.3))
+        overlap_words = min(max(0, self.overlap_size // 2), max_words - 1)
+        chunks = []
+        start = 0
+
+        while start < len(words):
+            end = min(start + max_words, len(words))
+            chunks.append(" ".join(words[start:end]))
+            if end == len(words):
+                break
+            start = end - overlap_words
+
+        return chunks
 
     def _create_chunk_document(
             self,
@@ -408,7 +428,6 @@ class MarkdownAwareChunker:
 
         # Basic estimation: count words and add character-based adjustment
         words = len(text.split())
-        chars = len(text)
 
         # A rough estimation: each word is about 1.3 tokens on average
         estimated_tokens = words * 1.3

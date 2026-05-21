@@ -64,7 +64,7 @@ async def root():
     model_exists = os.path.exists(model_dir)
 
     # Check if SPLADE service is initialized
-    service_initialized = splade_service is not None
+    service_initialized = splade_service.is_initialized
 
     return {
         "service": "SPLADE Content Server",

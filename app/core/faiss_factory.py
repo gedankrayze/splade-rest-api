@@ -42,7 +42,7 @@ class FAISSIndexFactory:
         elif index_type == FAISSIndexType.IVF:
             # IVF requires training data
             if vectors is None or len(vectors) < settings.FAISS_NLIST * 10:
-                logger.warning(f"Not enough training vectors for IVF index, falling back to IndexFlatIP")
+                logger.warning("Not enough training vectors for IVF index, falling back to IndexFlatIP")
                 return faiss.IndexFlatIP(vocab_size)
 
             # Create the IVF index
